@@ -1,0 +1,21 @@
+{
+  "name": "recetario-back",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings=DEP0040 server.js",
+    "dev": "nodemon --no-warnings=DEP0040 server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.5",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.18.2"
+  },
+  "keywords": [],
+  "author": "Pablo Estévez Álvarez",
+  "license": "ISC"
+}
