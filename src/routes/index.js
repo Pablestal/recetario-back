@@ -1,5 +1,6 @@
 import express from "express";
 import recipeRoutes from "./recipeRoutes.js";
+import tagRoutes from "./tagRoutes.js";
 import { notFoundHandler } from "../middleware/errorHandler.js";
 
 const router = express.Router();
@@ -19,12 +20,21 @@ router.get("/", (req, res) => {
         description: "Update existing recipe",
       },
       { method: "DELETE", path: "/recipes/:id", description: "Delete recipe" },
+      { method: "GET", path: "/tags", description: "Get all tags" },
+      {
+        method: "GET",
+        path: "/tags/:language",
+        description: "Get all tags by language",
+      },
     ],
   });
 });
 
 // Mount recipe routes
 router.use("/recipes", recipeRoutes);
+
+// Mount tag routes
+router.use("/tags", tagRoutes);
 
 // Handle not found routes - must be at the end
 router.use(notFoundHandler);
