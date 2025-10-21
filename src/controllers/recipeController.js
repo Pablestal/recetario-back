@@ -195,7 +195,6 @@ export const createRecipe = async (req, res, next) => {
         const imagesToInsert = images.map((image) => ({
           recipe_id: recipeId,
           url: image.url,
-          alt: image.alt || null, // Si no se proporciona, el trigger lo generará
         }));
 
         const { error: imagesError } = await supabase
@@ -358,7 +357,6 @@ export const updateRecipe = async (req, res, next) => {
         const imagesToInsert = images.map((image) => ({
           recipe_id: parseInt(id),
           url: image.url,
-          ...(image.alt && { alt: image.alt }),
         }));
 
         const { error: imagesError } = await supabase

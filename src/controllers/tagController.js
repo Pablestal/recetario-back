@@ -60,7 +60,7 @@ export const getAllTagsByLanguage = async (req, res, next) => {
       })) || [];
 
     return res.status(200).json({
-      message: "Tags retrieved successfully",
+      message: "Translated tags retrieved successfully",
       language: lang,
       data: transformedData,
     });
