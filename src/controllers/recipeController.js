@@ -130,6 +130,7 @@ export const createRecipe = async (req, res, next) => {
       steps,
       tags,
       images,
+      isPublic,
     } = req.body;
 
     if (!name || !name.trim()) {
@@ -170,13 +171,14 @@ export const createRecipe = async (req, res, next) => {
         .json(formatError("At least one step is required", 400));
     }
 
-    // 1. Create recipe object (sin el campo images)
     const newRecipe = {
       name: name.trim(),
       description: description?.trim() || "",
       prep_time: parseInt(prepTime),
       servings: parseInt(servings),
       difficulty: parseInt(difficulty),
+      user_id: req.userId,
+      is_public: isPublic,
     };
 
     const { data: recipeData, error: recipeError } = await supabase
