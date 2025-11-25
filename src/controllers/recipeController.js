@@ -345,8 +345,11 @@ export const updateRecipe = async (req, res, next) => {
       return res.status(400).json(formatError("Recipe ID is required", 400));
     }
 
+    // Use authenticated client if token is available
+    const client = req.token ? getAuthenticatedClient(req.token) : supabase;
+
     // Verify the recipe exists
-    const { data: existingRecipe, error: fetchError } = await supabase
+    const { data: existingRecipe, error: fetchError } = await client
       .from("recipes")
       .select()
       .eq("id", id)
@@ -377,7 +380,7 @@ export const updateRecipe = async (req, res, next) => {
 
     // Update recipe basic info
     if (Object.keys(updatedData).length > 0) {
-      const { error: updateError } = await supabase
+      const { error: updateError } = await client
         .from("recipes")
         .update(updatedData)
         .eq("id", id);
@@ -388,7 +391,7 @@ export const updateRecipe = async (req, res, next) => {
     // Update ingredients if provided
     if (ingredients && Array.isArray(ingredients)) {
       // Delete existing ingredients
-      await supabase.from("ingredients").delete().eq("recipe_id", id);
+      await client.from("ingredients").delete().eq("recipe_id", id);
 
       // Insert new ingredients
       if (ingredients.length > 0) {
@@ -401,7 +404,7 @@ export const updateRecipe = async (req, res, next) => {
           order: ingredient.order || index + 1,
         }));
 
-        const { error: ingredientsError } = await supabase
+        const { error: ingredientsError } = await client
           .from("ingredients")
           .insert(ingredientsToInsert);
 
@@ -412,7 +415,7 @@ export const updateRecipe = async (req, res, next) => {
     // Update steps with imageURL if provided
     if (steps && Array.isArray(steps)) {
       // Delete existing steps
-      await supabase.from("steps").delete().eq("recipe_id", id);
+      await client.from("steps").delete().eq("recipe_id", id);
 
       // Insert new steps with imageURL
       if (steps.length > 0) {
@@ -424,7 +427,7 @@ export const updateRecipe = async (req, res, next) => {
           image_url: step.imageUrl || null,
         }));
 
-        const { error: stepsError } = await supabase
+        const { error: stepsError } = await client
           .from("steps")
           .insert(stepsToInsert);
 
@@ -435,7 +438,7 @@ export const updateRecipe = async (req, res, next) => {
     // Update tags if provided
     if (tags && Array.isArray(tags)) {
       // Delete existing tags
-      await supabase.from("recipe_tags").delete().eq("recipe_id", id);
+      await client.from("recipe_tags").delete().eq("recipe_id", id);
 
       // Insert new tags
       if (tags.length > 0) {
@@ -444,7 +447,7 @@ export const updateRecipe = async (req, res, next) => {
           tag_id: tag.id,
         }));
 
-        const { error: tagsError } = await supabase
+        const { error: tagsError } = await client
           .from("recipe_tags")
           .insert(tagsToInsert);
 
@@ -453,7 +456,7 @@ export const updateRecipe = async (req, res, next) => {
     }
 
     // Get updated recipe
-    const { data: updatedRecipe, error: finalFetchError } = await supabase
+    const { data: updatedRecipe, error: finalFetchError } = await client
       .from("recipes")
       .select(
         `
