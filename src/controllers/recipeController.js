@@ -1,4 +1,4 @@
-import supabase from "../config/db.js";
+import supabase, { getAuthenticatedClient } from "../config/db.js";
 import {
   formatSuccess,
   formatError,
@@ -7,26 +7,23 @@ import {
 
 /**
  * Get all recipes with optional pagination
+ * Updated to include main_image_url and calories
  */
 export const getAllRecipes = async (req, res, next) => {
   try {
-    // Optional pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const start = (page - 1) * limit;
     const end = page * limit - 1;
 
-    // Get recipes with their images
-    const { data, error, count } = await supabase
+    // Use authenticated client if token is available
+    const client = req.token ? getAuthenticatedClient(req.token) : supabase;
+
+    const { data, error, count } = await client
       .from("recipes")
       .select(
         `
-        *,
-        images (
-          id,
-          url,
-          alt
-        )
+        *
       `,
         { count: "exact" }
       )
@@ -51,6 +48,7 @@ export const getAllRecipes = async (req, res, next) => {
 
 /**
  * Get a recipe by ID
+ * Updated to include step imageURL directly in steps
  */
 export const getRecipeById = async (req, res, next) => {
   try {
@@ -60,34 +58,36 @@ export const getRecipeById = async (req, res, next) => {
       return res.status(400).json(formatError("Recipe ID is required", 400));
     }
 
-    // Get recipe with all related data including images
-    const { data, error } = await supabase
+    // Use authenticated client if token is available
+    const client = req.token ? getAuthenticatedClient(req.token) : supabase;
+
+    // Get recipe with all related data
+    const { data, error } = await client
       .from("recipes")
       .select(
         `
         *,
-        images (
-          id,
-          url,
-          alt
-        ),
         ingredients (
           id,
           name,
           quantity,
-          optional
+          unit,
+          optional,
+          order
         ),
         steps (
           id,
           step_number,
           description,
-          tip
+          tip,
+          image_url
         ),
         recipe_tags (
           tag_id,
           tags (
             id,
-            name
+            name,
+            color
           )
         )
       `
@@ -106,6 +106,16 @@ export const getRecipeById = async (req, res, next) => {
       return res.status(404).json(formatError("Recipe not found", 404));
     }
 
+    // Sort ingredients by order
+    if (data.ingredients) {
+      data.ingredients.sort((a, b) => (a.order || 0) - (b.order || 0));
+    }
+
+    // Sort steps by step_number
+    if (data.steps) {
+      data.steps.sort((a, b) => (a.step_number || 0) - (b.step_number || 0));
+    }
+
     return res
       .status(200)
       .json(formatSuccess(data, "Recipe retrieved successfully"));
@@ -117,6 +127,7 @@ export const getRecipeById = async (req, res, next) => {
 
 /**
  * Create a new recipe
+ * Updated to handle mainImageURL, calories, ingredient units/order, and step imageURL
  */
 export const createRecipe = async (req, res, next) => {
   try {
@@ -126,13 +137,16 @@ export const createRecipe = async (req, res, next) => {
       prepTime,
       servings,
       difficulty,
+      calories,
+      mainImageURL,
       ingredients,
       steps,
       tags,
-      images,
       isPublic,
+      created_at,
     } = req.body;
 
+    // Validation
     if (!name || !name.trim()) {
       return res.status(400).json(formatError("Name is required", 400));
     }
@@ -171,17 +185,29 @@ export const createRecipe = async (req, res, next) => {
         .json(formatError("At least one step is required", 400));
     }
 
+    if (isPublic === undefined || isPublic === null) {
+      return res.status(400).json(formatError("isPublic is required", 400));
+    }
+
+    // Create authenticated Supabase client
+    const authenticatedSupabase = getAuthenticatedClient(req.token);
+
+    // Create recipe object
     const newRecipe = {
       name: name.trim(),
       description: description?.trim() || "",
       prep_time: parseInt(prepTime),
       servings: parseInt(servings),
       difficulty: parseInt(difficulty),
+      calories: calories ? parseInt(calories) : null,
+      main_image_url: mainImageURL || null,
       user_id: req.userId,
-      is_public: isPublic,
+      created_at: created_at || new Date().toISOString(),
+      is_public: Boolean(isPublic),
     };
 
-    const { data: recipeData, error: recipeError } = await supabase
+    // Insert recipe using authenticated client
+    const { data: recipeData, error: recipeError } = await authenticatedSupabase
       .from("recipes")
       .insert([newRecipe])
       .select()
@@ -192,81 +218,89 @@ export const createRecipe = async (req, res, next) => {
     const recipeId = recipeData.id;
 
     try {
-      // 2. Insert images if provided
-      if (images && Array.isArray(images) && images.length > 0) {
-        const imagesToInsert = images.map((image) => ({
-          recipe_id: recipeId,
-          url: image.url,
-        }));
-
-        const { error: imagesError } = await supabase
-          .from("images")
-          .insert(imagesToInsert);
-
-        if (imagesError) throw imagesError;
-      }
-
-      // 3. Insert ingredients
+      // Insert ingredients with unit and order
       if (ingredients && ingredients.length > 0) {
         const ingredientsToInsert = ingredients.map((ingredient, index) => ({
           recipe_id: recipeId,
           name: ingredient.name,
-          quantity: ingredient.quantity,
+          quantity: ingredient.quantity || null,
+          unit: ingredient.unit || null,
           optional: ingredient.optional || false,
+          order: ingredient.order || index + 1,
         }));
 
-        const { error: ingredientsError } = await supabase
+        const { error: ingredientsError } = await authenticatedSupabase
           .from("ingredients")
           .insert(ingredientsToInsert);
 
         if (ingredientsError) throw ingredientsError;
       }
 
-      // 4. Insert steps
+      // Insert steps with imageURL
       if (steps && steps.length > 0) {
         const stepsToInsert = steps.map((step, index) => ({
           recipe_id: recipeId,
           step_number: step.step_number || index + 1,
           description: step.description,
           tip: step.tip || null,
+          image_url: step.imageUrl || null,
         }));
 
-        const { error: stepsError } = await supabase
+        const { error: stepsError } = await authenticatedSupabase
           .from("steps")
           .insert(stepsToInsert);
 
         if (stepsError) throw stepsError;
       }
 
-      // 5. Insert recipe_tags (many-to-many)
+      // Insert recipe_tags (many-to-many)
       if (tags && tags.length > 0) {
         const tagsToInsert = tags.map((tag) => ({
           recipe_id: recipeId,
           tag_id: tag.id,
         }));
 
-        const { error: tagsError } = await supabase
+        const { error: tagsError } = await authenticatedSupabase
           .from("recipe_tags")
           .insert(tagsToInsert);
 
         if (tagsError) throw tagsError;
       }
 
-      // 6. Get the complete recipe with images for response
-      const { data: completeRecipe, error: fetchError } = await supabase
-        .from("recipes")
-        .select(
-          `
+      // Get the complete recipe for response
+      const { data: completeRecipe, error: fetchError } =
+        await authenticatedSupabase
+          .from("recipes")
+          .select(
+            `
           *,
-          images (
+          ingredients (
             id,
-            url,
-            alt
+            name,
+            quantity,
+            unit,
+            optional,
+            order
+          ),
+          steps (
+            id,
+            step_number,
+            description,
+            tip,
+            image_url
+          ),
+          recipe_tags (
+            tag_id,
+            tags (
+              id,
+              name,
+              color
+            )
           )
         `
-        )
-        .eq("id", recipeId)
-        .single();
+          )
+          .eq("id", recipeId)
+          .single();
 
       if (fetchError) throw fetchError;
 
@@ -277,7 +311,7 @@ export const createRecipe = async (req, res, next) => {
         );
     } catch (error) {
       // Rollback: delete the recipe if any step fails
-      await supabase.from("recipes").delete().eq("id", recipeId);
+      await authenticatedSupabase.from("recipes").delete().eq("id", recipeId);
       throw error;
     }
   } catch (error) {
@@ -288,6 +322,7 @@ export const createRecipe = async (req, res, next) => {
 
 /**
  * Update an existing recipe
+ * Updated to handle new fields and step imageURL
  */
 export const updateRecipe = async (req, res, next) => {
   try {
@@ -298,17 +333,19 @@ export const updateRecipe = async (req, res, next) => {
       prepTime,
       servings,
       difficulty,
+      calories,
+      mainImageURL,
       ingredients,
       steps,
       tags,
-      images,
+      isPublic,
     } = req.body;
 
     if (!id) {
       return res.status(400).json(formatError("Recipe ID is required", 400));
     }
 
-    // First verify the recipe exists
+    // Verify the recipe exists
     const { data: existingRecipe, error: fetchError } = await supabase
       .from("recipes")
       .select()
@@ -333,6 +370,10 @@ export const updateRecipe = async (req, res, next) => {
     if (prepTime) updatedData.prep_time = parseInt(prepTime);
     if (servings) updatedData.servings = parseInt(servings);
     if (difficulty) updatedData.difficulty = parseInt(difficulty);
+    if (calories !== undefined)
+      updatedData.calories = calories ? parseInt(calories) : null;
+    if (mainImageURL !== undefined) updatedData.main_image_url = mainImageURL;
+    if (isPublic !== undefined) updatedData.is_public = Boolean(isPublic);
 
     // Update recipe basic info
     if (Object.keys(updatedData).length > 0) {
@@ -344,41 +385,101 @@ export const updateRecipe = async (req, res, next) => {
       if (updateError) throw updateError;
     }
 
-    // Update images if provided
-    if (images && Array.isArray(images)) {
-      // Delete existing images
-      const { error: deleteImagesError } = await supabase
-        .from("images")
-        .delete()
-        .eq("recipe_id", id);
+    // Update ingredients if provided
+    if (ingredients && Array.isArray(ingredients)) {
+      // Delete existing ingredients
+      await supabase.from("ingredients").delete().eq("recipe_id", id);
 
-      if (deleteImagesError) throw deleteImagesError;
-
-      // Insert new images
-      if (images.length > 0) {
-        const imagesToInsert = images.map((image) => ({
+      // Insert new ingredients
+      if (ingredients.length > 0) {
+        const ingredientsToInsert = ingredients.map((ingredient, index) => ({
           recipe_id: parseInt(id),
-          url: image.url,
+          name: ingredient.name,
+          quantity: ingredient.quantity || null,
+          unit: ingredient.unit || null,
+          optional: ingredient.optional || false,
+          order: ingredient.order || index + 1,
         }));
 
-        const { error: imagesError } = await supabase
-          .from("images")
-          .insert(imagesToInsert);
+        const { error: ingredientsError } = await supabase
+          .from("ingredients")
+          .insert(ingredientsToInsert);
 
-        if (imagesError) throw imagesError;
+        if (ingredientsError) throw ingredientsError;
       }
     }
 
-    // Get updated recipe with images
+    // Update steps with imageURL if provided
+    if (steps && Array.isArray(steps)) {
+      // Delete existing steps
+      await supabase.from("steps").delete().eq("recipe_id", id);
+
+      // Insert new steps with imageURL
+      if (steps.length > 0) {
+        const stepsToInsert = steps.map((step, index) => ({
+          recipe_id: parseInt(id),
+          step_number: step.step_number || index + 1,
+          description: step.description,
+          tip: step.tip || null,
+          image_url: step.imageUrl || null,
+        }));
+
+        const { error: stepsError } = await supabase
+          .from("steps")
+          .insert(stepsToInsert);
+
+        if (stepsError) throw stepsError;
+      }
+    }
+
+    // Update tags if provided
+    if (tags && Array.isArray(tags)) {
+      // Delete existing tags
+      await supabase.from("recipe_tags").delete().eq("recipe_id", id);
+
+      // Insert new tags
+      if (tags.length > 0) {
+        const tagsToInsert = tags.map((tag) => ({
+          recipe_id: parseInt(id),
+          tag_id: tag.id,
+        }));
+
+        const { error: tagsError } = await supabase
+          .from("recipe_tags")
+          .insert(tagsToInsert);
+
+        if (tagsError) throw tagsError;
+      }
+    }
+
+    // Get updated recipe
     const { data: updatedRecipe, error: finalFetchError } = await supabase
       .from("recipes")
       .select(
         `
         *,
-        images (
+        ingredients (
           id,
-          url,
-          alt
+          name,
+          quantity,
+          unit,
+          optional,
+          order
+        ),
+        steps (
+          id,
+          step_number,
+          description,
+          tip,
+          image_url
+        ),
+        recipe_tags (
+          tag_id,
+          tags (
+            id,
+            name,
+            color
+          )
         )
       `
       )
@@ -407,12 +508,16 @@ export const deleteRecipe = async (req, res, next) => {
       return res.status(400).json(formatError("Recipe ID is required", 400));
     }
 
+    // Create authenticated Supabase client
+    const authenticatedSupabase = getAuthenticatedClient(req.token);
+
     // Verify the recipe exists
-    const { data: existingRecipe, error: fetchError } = await supabase
-      .from("recipes")
-      .select()
-      .eq("id", id)
-      .single();
+    const { data: existingRecipe, error: fetchError } =
+      await authenticatedSupabase
+        .from("recipes")
+        .select()
+        .eq("id", id)
+        .single();
 
     if (fetchError) {
       if (fetchError.code === "PGRST116") {
@@ -425,8 +530,8 @@ export const deleteRecipe = async (req, res, next) => {
       return res.status(404).json(formatError("Recipe not found", 404));
     }
 
-    // Delete the recipe (CASCADE will handle related images)
-    const { error: deleteError } = await supabase
+    // Delete the recipe (CASCADE will handle related data)
+    const { error: deleteError } = await authenticatedSupabase
       .from("recipes")
       .delete()
       .eq("id", id);

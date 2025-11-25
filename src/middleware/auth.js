@@ -25,9 +25,10 @@ export const verifyAuth = async (req, res, next) => {
       });
     }
 
-    // Add user info to request object
+    // Add user info and token to request object
     req.user = user;
     req.userId = user.id;
+    req.token = token; // Add the token to the request
     next();
   } catch (error) {
     console.error("Authentication error:", error);
@@ -53,6 +54,7 @@ export const optionalAuth = async (req, res, next) => {
       if (!error && user) {
         req.user = user;
         req.userId = user.id;
+        req.token = token; // Add the token to the request
       }
     }
 
