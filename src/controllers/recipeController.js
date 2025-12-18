@@ -11,8 +11,8 @@ import {
  */
 export const getAllRecipes = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const page = Number.parseInt(req.query.page) || 1;
+    const limit = Number.parseInt(req.query.limit) || 10;
     const start = (page - 1) * limit;
     const end = page * limit - 1;
 
@@ -126,6 +126,216 @@ export const getRecipeById = async (req, res, next) => {
 };
 
 /**
+ * Validates recipe creation data
+ */
+const validateRecipeData = (data) => {
+  const { name, prepTime, servings, difficulty, ingredients, steps, isPublic } = data;
+
+  if (!name?.trim()) {
+    return "Name is required";
+  }
+
+  if (!prepTime || prepTime < 1) {
+    return "Valid preparation time is required";
+  }
+
+  if (!servings || servings < 1) {
+    return "Valid number of servings is required";
+  }
+
+  if (!difficulty || difficulty < 1 || difficulty > 5) {
+    return "Difficulty must be between 1 and 5";
+  }
+
+  if (!ingredients || !Array.isArray(ingredients) || ingredients.length === 0) {
+    return "At least one ingredient is required";
+  }
+
+  if (!steps || !Array.isArray(steps) || steps.length === 0) {
+    return "At least one step is required";
+  }
+
+  if (isPublic === undefined || isPublic === null) {
+    return "isPublic is required";
+  }
+
+  return null;
+};
+
+/**
+ * Inserts ingredients for a recipe
+ */
+const insertIngredients = async (client, recipeId, ingredients) => {
+  const ingredientsToInsert = ingredients.map((ingredient, index) => ({
+    recipe_id: recipeId,
+    name: ingredient.name,
+    quantity: ingredient.quantity || null,
+    unit: ingredient.unit || null,
+    optional: ingredient.optional || false,
+    order: ingredient.order || index + 1,
+  }));
+
+  const { error } = await client.from("ingredients").insert(ingredientsToInsert);
+  if (error) throw error;
+};
+
+/**
+ * Inserts steps for a recipe
+ */
+const insertSteps = async (client, recipeId, steps) => {
+  const stepsToInsert = steps.map((step, index) => ({
+    recipe_id: recipeId,
+    step_number: step.step_number || index + 1,
+    description: step.description,
+    tip: step.tip || null,
+    image_url: step.imageUrl || null,
+  }));
+
+  const { error } = await client.from("steps").insert(stepsToInsert);
+  if (error) throw error;
+};
+
+/**
+ * Inserts tags for a recipe
+ */
+const insertTags = async (client, recipeId, tags) => {
+  const tagsToInsert = tags.map((tag) => ({
+    recipe_id: recipeId,
+    tag_id: tag.id,
+  }));
+
+  const { error } = await client.from("recipe_tags").insert(tagsToInsert);
+  if (error) throw error;
+};
+
+/**
+ * Fetches complete recipe with all relations
+ */
+const fetchCompleteRecipe = async (client, recipeId) => {
+  const { data, error } = await client
+    .from("recipes")
+    .select(
+      `
+      *,
+      ingredients (
+        id,
+        name,
+        quantity,
+        unit,
+        optional,
+        order
+      ),
+      steps (
+        id,
+        step_number,
+        description,
+        tip,
+        image_url
+      ),
+      recipe_tags (
+        tag_id,
+        tags (
+          id,
+          name,
+          color
+        )
+      )
+    `
+    )
+    .eq("id", recipeId)
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+/**
+ * Verifies if a recipe exists
+ */
+const verifyRecipeExists = async (client, id) => {
+  const { data, error } = await client
+    .from("recipes")
+    .select()
+    .eq("id", id)
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") {
+      return { exists: false, notFound: true };
+    }
+    throw error;
+  }
+
+  return { exists: !!data, notFound: false };
+};
+
+/**
+ * Prepares updated data for recipe
+ */
+const prepareRecipeUpdateData = (body) => {
+  const { name, description, prepTime, servings, difficulty, calories, mainImageURL, isPublic } = body;
+  const updatedData = {};
+
+  if (name) updatedData.name = name.trim();
+  if (description !== undefined) updatedData.description = description.trim();
+  if (prepTime) updatedData.prep_time = Number.parseInt(prepTime);
+  if (servings) updatedData.servings = Number.parseInt(servings);
+  if (difficulty) updatedData.difficulty = Number.parseInt(difficulty);
+  if (calories !== undefined) updatedData.calories = calories ? Number.parseInt(calories) : null;
+  if (mainImageURL !== undefined) updatedData.main_image_url = mainImageURL;
+  if (isPublic !== undefined) updatedData.is_public = Boolean(isPublic);
+
+  return updatedData;
+};
+
+/**
+ * Updates recipe basic information
+ */
+const updateRecipeBasicInfo = async (client, id, updatedData) => {
+  if (Object.keys(updatedData).length === 0) return;
+
+  const { error } = await client
+    .from("recipes")
+    .update(updatedData)
+    .eq("id", id);
+
+  if (error) throw error;
+};
+
+/**
+ * Updates ingredients for a recipe (delete and replace)
+ */
+const updateIngredients = async (client, recipeId, ingredients) => {
+  await client.from("ingredients").delete().eq("recipe_id", recipeId);
+
+  if (ingredients.length > 0) {
+    await insertIngredients(client, recipeId, ingredients);
+  }
+};
+
+/**
+ * Updates steps for a recipe (delete and replace)
+ */
+const updateSteps = async (client, recipeId, steps) => {
+  await client.from("steps").delete().eq("recipe_id", recipeId);
+
+  if (steps.length > 0) {
+    await insertSteps(client, recipeId, steps);
+  }
+};
+
+/**
+ * Updates tags for a recipe (delete and replace)
+ */
+const updateTags = async (client, recipeId, tags) => {
+  await client.from("recipe_tags").delete().eq("recipe_id", recipeId);
+
+  if (tags.length > 0) {
+    await insertTags(client, recipeId, tags);
+  }
+};
+
+/**
  * Create a new recipe
  * Updated to handle mainImageURL, calories, ingredient units/order, and step imageURL
  */
@@ -146,67 +356,26 @@ export const createRecipe = async (req, res, next) => {
       created_at,
     } = req.body;
 
-    // Validation
-    if (!name || !name.trim()) {
-      return res.status(400).json(formatError("Name is required", 400));
+    const validationError = validateRecipeData(req.body);
+    if (validationError) {
+      return res.status(400).json(formatError(validationError, 400));
     }
 
-    if (!prepTime || prepTime < 1) {
-      return res
-        .status(400)
-        .json(formatError("Valid preparation time is required", 400));
-    }
-
-    if (!servings || servings < 1) {
-      return res
-        .status(400)
-        .json(formatError("Valid number of servings is required", 400));
-    }
-
-    if (!difficulty || difficulty < 1 || difficulty > 5) {
-      return res
-        .status(400)
-        .json(formatError("Difficulty must be between 1 and 5", 400));
-    }
-
-    if (
-      !ingredients ||
-      !Array.isArray(ingredients) ||
-      ingredients.length === 0
-    ) {
-      return res
-        .status(400)
-        .json(formatError("At least one ingredient is required", 400));
-    }
-
-    if (!steps || !Array.isArray(steps) || steps.length === 0) {
-      return res
-        .status(400)
-        .json(formatError("At least one step is required", 400));
-    }
-
-    if (isPublic === undefined || isPublic === null) {
-      return res.status(400).json(formatError("isPublic is required", 400));
-    }
-
-    // Create authenticated Supabase client
     const authenticatedSupabase = getAuthenticatedClient(req.token);
 
-    // Create recipe object
     const newRecipe = {
       name: name.trim(),
       description: description?.trim() || "",
-      prep_time: parseInt(prepTime),
-      servings: parseInt(servings),
-      difficulty: parseInt(difficulty),
-      calories: calories ? parseInt(calories) : null,
+      prep_time: Number.parseInt(prepTime),
+      servings: Number.parseInt(servings),
+      difficulty: Number.parseInt(difficulty),
+      calories: calories ? Number.parseInt(calories) : null,
       main_image_url: mainImageURL || null,
       user_id: req.userId,
       created_at: created_at || new Date().toISOString(),
       is_public: Boolean(isPublic),
     };
 
-    // Insert recipe using authenticated client
     const { data: recipeData, error: recipeError } = await authenticatedSupabase
       .from("recipes")
       .insert([newRecipe])
@@ -218,99 +387,19 @@ export const createRecipe = async (req, res, next) => {
     const recipeId = recipeData.id;
 
     try {
-      // Insert ingredients with unit and order
-      if (ingredients && ingredients.length > 0) {
-        const ingredientsToInsert = ingredients.map((ingredient, index) => ({
-          recipe_id: recipeId,
-          name: ingredient.name,
-          quantity: ingredient.quantity || null,
-          unit: ingredient.unit || null,
-          optional: ingredient.optional || false,
-          order: ingredient.order || index + 1,
-        }));
+      await insertIngredients(authenticatedSupabase, recipeId, ingredients);
+      await insertSteps(authenticatedSupabase, recipeId, steps);
 
-        const { error: ingredientsError } = await authenticatedSupabase
-          .from("ingredients")
-          .insert(ingredientsToInsert);
-
-        if (ingredientsError) throw ingredientsError;
+      if (tags?.length > 0) {
+        await insertTags(authenticatedSupabase, recipeId, tags);
       }
 
-      // Insert steps with imageURL
-      if (steps && steps.length > 0) {
-        const stepsToInsert = steps.map((step, index) => ({
-          recipe_id: recipeId,
-          step_number: step.step_number || index + 1,
-          description: step.description,
-          tip: step.tip || null,
-          image_url: step.imageUrl || null,
-        }));
-
-        const { error: stepsError } = await authenticatedSupabase
-          .from("steps")
-          .insert(stepsToInsert);
-
-        if (stepsError) throw stepsError;
-      }
-
-      // Insert recipe_tags (many-to-many)
-      if (tags && tags.length > 0) {
-        const tagsToInsert = tags.map((tag) => ({
-          recipe_id: recipeId,
-          tag_id: tag.id,
-        }));
-
-        const { error: tagsError } = await authenticatedSupabase
-          .from("recipe_tags")
-          .insert(tagsToInsert);
-
-        if (tagsError) throw tagsError;
-      }
-
-      // Get the complete recipe for response
-      const { data: completeRecipe, error: fetchError } =
-        await authenticatedSupabase
-          .from("recipes")
-          .select(
-            `
-          *,
-          ingredients (
-            id,
-            name,
-            quantity,
-            unit,
-            optional,
-            order
-          ),
-          steps (
-            id,
-            step_number,
-            description,
-            tip,
-            image_url
-          ),
-          recipe_tags (
-            tag_id,
-            tags (
-              id,
-              name,
-              color
-            )
-          )
-        `
-          )
-          .eq("id", recipeId)
-          .single();
-
-      if (fetchError) throw fetchError;
+      const completeRecipe = await fetchCompleteRecipe(authenticatedSupabase, recipeId);
 
       return res
         .status(201)
-        .json(
-          formatSuccess(completeRecipe, "Recipe created successfully", 201)
-        );
+        .json(formatSuccess(completeRecipe, "Recipe created successfully", 201));
     } catch (error) {
-      // Rollback: delete the recipe if any step fails
       await authenticatedSupabase.from("recipes").delete().eq("id", recipeId);
       throw error;
     }
@@ -327,169 +416,38 @@ export const createRecipe = async (req, res, next) => {
 export const updateRecipe = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const {
-      name,
-      description,
-      prepTime,
-      servings,
-      difficulty,
-      calories,
-      mainImageURL,
-      ingredients,
-      steps,
-      tags,
-      isPublic,
-    } = req.body;
+    const { ingredients, steps, tags } = req.body;
 
     if (!id) {
       return res.status(400).json(formatError("Recipe ID is required", 400));
     }
 
-    // Use authenticated client if token is available
     const client = req.token ? getAuthenticatedClient(req.token) : supabase;
 
-    // Verify the recipe exists
-    const { data: existingRecipe, error: fetchError } = await client
-      .from("recipes")
-      .select()
-      .eq("id", id)
-      .single();
-
-    if (fetchError) {
-      if (fetchError.code === "PGRST116") {
-        return res.status(404).json(formatError("Recipe not found", 404));
-      }
-      throw fetchError;
+    const { exists, notFound } = await verifyRecipeExists(client, id);
+    if (notFound) {
+      return res.status(404).json(formatError("Recipe not found", 404));
     }
-
-    if (!existingRecipe) {
+    if (!exists) {
       return res.status(404).json(formatError("Recipe not found", 404));
     }
 
-    // Prepare data for update
-    const updatedData = {};
-    if (name) updatedData.name = name.trim();
-    if (description !== undefined) updatedData.description = description.trim();
-    if (prepTime) updatedData.prep_time = parseInt(prepTime);
-    if (servings) updatedData.servings = parseInt(servings);
-    if (difficulty) updatedData.difficulty = parseInt(difficulty);
-    if (calories !== undefined)
-      updatedData.calories = calories ? parseInt(calories) : null;
-    if (mainImageURL !== undefined) updatedData.main_image_url = mainImageURL;
-    if (isPublic !== undefined) updatedData.is_public = Boolean(isPublic);
+    const updatedData = prepareRecipeUpdateData(req.body);
+    await updateRecipeBasicInfo(client, id, updatedData);
 
-    // Update recipe basic info
-    if (Object.keys(updatedData).length > 0) {
-      const { error: updateError } = await client
-        .from("recipes")
-        .update(updatedData)
-        .eq("id", id);
-
-      if (updateError) throw updateError;
-    }
-
-    // Update ingredients if provided
     if (ingredients && Array.isArray(ingredients)) {
-      // Delete existing ingredients
-      await client.from("ingredients").delete().eq("recipe_id", id);
-
-      // Insert new ingredients
-      if (ingredients.length > 0) {
-        const ingredientsToInsert = ingredients.map((ingredient, index) => ({
-          recipe_id: parseInt(id),
-          name: ingredient.name,
-          quantity: ingredient.quantity || null,
-          unit: ingredient.unit || null,
-          optional: ingredient.optional || false,
-          order: ingredient.order || index + 1,
-        }));
-
-        const { error: ingredientsError } = await client
-          .from("ingredients")
-          .insert(ingredientsToInsert);
-
-        if (ingredientsError) throw ingredientsError;
-      }
+      await updateIngredients(client, id, ingredients);
     }
 
-    // Update steps with imageURL if provided
     if (steps && Array.isArray(steps)) {
-      // Delete existing steps
-      await client.from("steps").delete().eq("recipe_id", id);
-
-      // Insert new steps with imageURL
-      if (steps.length > 0) {
-        const stepsToInsert = steps.map((step, index) => ({
-          recipe_id: parseInt(id),
-          step_number: step.step_number || index + 1,
-          description: step.description,
-          tip: step.tip || null,
-          image_url: step.imageUrl || null,
-        }));
-
-        const { error: stepsError } = await client
-          .from("steps")
-          .insert(stepsToInsert);
-
-        if (stepsError) throw stepsError;
-      }
+      await updateSteps(client, id, steps);
     }
 
-    // Update tags if provided
     if (tags && Array.isArray(tags)) {
-      // Delete existing tags
-      await client.from("recipe_tags").delete().eq("recipe_id", id);
-
-      // Insert new tags
-      if (tags.length > 0) {
-        const tagsToInsert = tags.map((tag) => ({
-          recipe_id: parseInt(id),
-          tag_id: tag.id,
-        }));
-
-        const { error: tagsError } = await client
-          .from("recipe_tags")
-          .insert(tagsToInsert);
-
-        if (tagsError) throw tagsError;
-      }
+      await updateTags(client, id, tags);
     }
 
-    // Get updated recipe
-    const { data: updatedRecipe, error: finalFetchError } = await client
-      .from("recipes")
-      .select(
-        `
-        *,
-        ingredients (
-          id,
-          name,
-          quantity,
-          unit,
-          optional,
-          order
-        ),
-        steps (
-          id,
-          step_number,
-          description,
-          tip,
-          image_url
-        ),
-        recipe_tags (
-          tag_id,
-          tags (
-            id,
-            name,
-            color
-          )
-        )
-      `
-      )
-      .eq("id", id)
-      .single();
-
-    if (finalFetchError) throw finalFetchError;
+    const updatedRecipe = await fetchCompleteRecipe(client, id);
 
     return res
       .status(200)

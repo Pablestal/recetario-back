@@ -4,7 +4,7 @@ export const verifyAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    if (!authHeader?.startsWith("Bearer ")) {
       return res.status(401).json({
         error: "Unauthorized",
         message: "Auth token missing or malformed",
@@ -44,7 +44,7 @@ export const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
-    if (authHeader && authHeader.startsWith("Bearer ")) {
+    if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.replace("Bearer ", "");
       const {
         data: { user },
