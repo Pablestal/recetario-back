@@ -71,7 +71,6 @@ export const getRecipeById = async (req, res, next) => {
           id,
           name,
           quantity,
-          unit,
           optional,
           order
         ),
@@ -170,7 +169,6 @@ const insertIngredients = async (client, recipeId, ingredients) => {
     recipe_id: recipeId,
     name: ingredient.name,
     quantity: ingredient.quantity || null,
-    unit: ingredient.unit || null,
     optional: ingredient.optional || false,
     order: ingredient.order || index + 1,
   }));
@@ -201,7 +199,7 @@ const insertSteps = async (client, recipeId, steps) => {
 const insertTags = async (client, recipeId, tags) => {
   const tagsToInsert = tags.map((tag) => ({
     recipe_id: recipeId,
-    tag_id: tag.id,
+    tag_id: tag.id ?? tag.tag_id,
   }));
 
   const { error } = await client.from("recipe_tags").insert(tagsToInsert);
@@ -221,7 +219,6 @@ const fetchCompleteRecipe = async (client, recipeId) => {
         id,
         name,
         quantity,
-        unit,
         optional,
         order
       ),
@@ -328,7 +325,8 @@ const updateSteps = async (client, recipeId, steps) => {
  * Updates tags for a recipe (delete and replace)
  */
 const updateTags = async (client, recipeId, tags) => {
-  await client.from("recipe_tags").delete().eq("recipe_id", recipeId);
+  const { error: deleteError } = await client.from("recipe_tags").delete().eq("recipe_id", recipeId);
+  if (deleteError) throw deleteError;
 
   if (tags.length > 0) {
     await insertTags(client, recipeId, tags);
