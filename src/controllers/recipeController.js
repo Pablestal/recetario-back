@@ -23,7 +23,15 @@ export const getAllRecipes = async (req, res, next) => {
       .from("recipes")
       .select(
         `
-        *
+        *,
+        recipe_tags (
+          tag_id,
+          tags (
+            id,
+            name,
+            color
+          )
+        )
       `,
         { count: "exact" }
       )
