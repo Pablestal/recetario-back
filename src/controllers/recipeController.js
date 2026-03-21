@@ -24,6 +24,11 @@ export const getAllRecipes = async (req, res, next) => {
       .select(
         `
         *,
+        user:users (
+          id,
+          name,
+          avatar_url
+        ),
         recipe_tags (
           tag_id,
           tags (
@@ -75,6 +80,11 @@ export const getRecipeById = async (req, res, next) => {
       .select(
         `
         *,
+        user:users (
+          id,
+          name,
+          avatar_url
+        ),
         ingredients (
           id,
           name,
@@ -223,6 +233,11 @@ const fetchCompleteRecipe = async (client, recipeId) => {
     .select(
       `
       *,
+      users (
+        id,
+        name,
+        avatar_url
+      ),
       ingredients (
         id,
         name,
