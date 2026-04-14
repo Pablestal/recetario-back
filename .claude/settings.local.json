@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find c:UserspableDocumentsProyectosrecetario-back -not -path */node_modules/* -not -path */.git/* -type d)"
+    ]
+  }
+}

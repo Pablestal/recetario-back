@@ -24,9 +24,10 @@ export const getAllRecipes = async (req, res, next) => {
       .select(
         `
         *,
-        user:users (
+        user:users!user_id (
           id,
           name,
+          username,
           avatar_url
         ),
         recipe_tags (
@@ -44,8 +45,24 @@ export const getAllRecipes = async (req, res, next) => {
 
     if (error) throw error;
 
+    let bookmarkedIds = new Set();
+    if (req.userId && data.length > 0) {
+      const recipeIds = data.map((r) => r.id);
+      const { data: bookmarks } = await client
+        .from("collection_recipes")
+        .select("recipe_id, collections!inner(user_id)")
+        .eq("collections.user_id", req.userId)
+        .in("recipe_id", recipeIds);
+
+      if (bookmarks) {
+        bookmarkedIds = new Set(bookmarks.map((b) => b.recipe_id));
+      }
+    }
+
+    const recipes = data.map((r) => ({ ...r, is_bookmarked: bookmarkedIds.has(r.id) }));
+
     const response = formatPagination(
-      data,
+      recipes,
       count,
       page,
       limit,
@@ -80,9 +97,10 @@ export const getRecipeById = async (req, res, next) => {
       .select(
         `
         *,
-        user:users (
+        user:users!user_id (
           id,
           name,
+          username,
           avatar_url
         ),
         ingredients (
@@ -133,9 +151,21 @@ export const getRecipeById = async (req, res, next) => {
       data.steps.sort((a, b) => (a.step_number || 0) - (b.step_number || 0));
     }
 
+    let isBookmarked = false;
+    if (req.userId) {
+      const { data: bookmark } = await client
+        .from("collection_recipes")
+        .select("recipe_id, collections!inner(user_id)")
+        .eq("recipe_id", id)
+        .eq("collections.user_id", req.userId)
+        .maybeSingle();
+
+      isBookmarked = !!bookmark;
+    }
+
     return res
       .status(200)
-      .json(formatSuccess(data, "Recipe retrieved successfully"));
+      .json(formatSuccess({ ...data, is_bookmarked: isBookmarked }, "Recipe retrieved successfully"));
   } catch (error) {
     console.error("Error fetching recipe:", error);
     next(error);
@@ -233,7 +263,7 @@ const fetchCompleteRecipe = async (client, recipeId) => {
     .select(
       `
       *,
-      users (
+      user:users!user_id (
         id,
         name,
         avatar_url

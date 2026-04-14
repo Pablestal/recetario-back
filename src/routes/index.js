@@ -1,6 +1,8 @@
 import express from "express";
 import recipeRoutes from "./recipeRoutes.js";
 import tagRoutes from "./tagRoutes.js";
+import userRoutes from "./userRoutes.js";
+import collectionRoutes from "./collectionRoutes.js";
 import { notFoundHandler } from "../middleware/errorHandler.js";
 
 const router = express.Router();
@@ -35,6 +37,12 @@ router.use("/recipes", recipeRoutes);
 
 // Mount tag routes
 router.use("/tags", tagRoutes);
+
+// Mount user routes
+router.use("/users", userRoutes);
+
+// Mount collection routes
+router.use("/collections", collectionRoutes);
 
 // Handle not found routes - must be at the end
 router.use(notFoundHandler);
