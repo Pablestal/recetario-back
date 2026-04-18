@@ -1,4 +1,4 @@
-import supabase, { getAuthenticatedClient } from "../config/db.js";
+import supabase, { getAuthenticatedClient, supabaseAdmin } from "../config/db.js";
 import {
   formatSuccess,
   formatError,
@@ -23,13 +23,18 @@ export const getUserProfile = async (req, res, next) => {
     }
     if (error) throw error;
 
-    const [{ count: recipeCount }, { count: followersCount }, { count: followingCount }] =
+    const isOwner = req.userId === id;
+
+    const [{ count: publicRecipeCount }, { count: totalRecipeCount }, { count: followersCount }, { count: followingCount }] =
       await Promise.all([
         client
           .from("recipes")
           .select("*", { count: "exact", head: true })
           .eq("user_id", id)
           .eq("is_public", true),
+        isOwner
+          ? client.from("recipes").select("*", { count: "exact", head: true }).eq("user_id", id)
+          : Promise.resolve({ count: null }),
         client
           .from("user_followers")
           .select("*", { count: "exact", head: true })
@@ -40,12 +45,18 @@ export const getUserProfile = async (req, res, next) => {
           .eq("follower_id", id),
       ]);
 
-    return res.status(200).json(
-      formatSuccess(
-        { ...user, recipe_count: recipeCount, followers_count: followersCount, following_count: followingCount },
-        "User profile retrieved successfully"
-      )
-    );
+    const responseData = {
+      ...user,
+      recipe_count: isOwner ? totalRecipeCount : publicRecipeCount,
+      followers_count: followersCount,
+      following_count: followingCount,
+    };
+
+    if (isOwner) {
+      responseData.public_recipe_count = publicRecipeCount;
+    }
+
+    return res.status(200).json(formatSuccess(responseData, "User profile retrieved successfully"));
   } catch (error) {
     console.error("Error fetching user profile:", error);
     next(error);
@@ -68,19 +79,30 @@ export const getUserProfileByUsername = async (req, res, next) => {
     }
     if (error) throw error;
 
-    const [{ count: recipeCount }, { count: followersCount }, { count: followingCount }] =
+    const isOwner = req.userId === user.id;
+
+    const [{ count: publicRecipeCount }, { count: totalRecipeCount }, { count: followersCount }, { count: followingCount }] =
       await Promise.all([
         client.from("recipes").select("*", { count: "exact", head: true }).eq("user_id", user.id).eq("is_public", true),
+        isOwner
+          ? client.from("recipes").select("*", { count: "exact", head: true }).eq("user_id", user.id)
+          : Promise.resolve({ count: null }),
         client.from("user_followers").select("*", { count: "exact", head: true }).eq("following_id", user.id),
         client.from("user_followers").select("*", { count: "exact", head: true }).eq("follower_id", user.id),
       ]);
 
-    return res.status(200).json(
-      formatSuccess(
-        { ...user, recipe_count: recipeCount, followers_count: followersCount, following_count: followingCount },
-        "User profile retrieved successfully"
-      )
-    );
+    const responseData = {
+      ...user,
+      recipe_count: isOwner ? totalRecipeCount : publicRecipeCount,
+      followers_count: followersCount,
+      following_count: followingCount,
+    };
+
+    if (isOwner) {
+      responseData.public_recipe_count = publicRecipeCount;
+    }
+
+    return res.status(200).json(formatSuccess(responseData, "User profile retrieved successfully"));
   } catch (error) {
     console.error("Error fetching user profile by username:", error);
     next(error);
@@ -343,6 +365,258 @@ export const getFollowing = async (req, res, next) => {
     return res.status(200).json(formatSuccess(following, "Following retrieved successfully"));
   } catch (error) {
     console.error("Error fetching following:", error);
+    next(error);
+  }
+};
+
+// ─── Account management ───────────────────────────────────────────────────────
+
+const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
+
+export const checkEmailAvailability = async (req, res, next) => {
+  try {
+    const { email } = req.params;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(email)) {
+      return res.status(400).json(formatError("Invalid email format", 400));
+    }
+
+    const { data } = await supabase
+      .from("users")
+      .select("id")
+      .eq("email", email.toLowerCase())
+      .maybeSingle();
+
+    const available = !data;
+    console.log(`Email check: "${email}" → ${available ? "available" : "taken"}`);
+    return res.status(200).json(formatSuccess({ available }, "OK"));
+  } catch (error) {
+    console.error("Error checking email availability:", error);
+    next(error);
+  }
+};
+
+export const checkUsernameAvailability = async (req, res, next) => {
+  try {
+    const { username } = req.params;
+
+    if (!USERNAME_REGEX.test(username)) {
+      return res.status(400).json(formatError("Invalid username format", 400));
+    }
+
+    const { data } = await supabase
+      .from("users")
+      .select("id")
+      .eq("username", username.toLowerCase())
+      .maybeSingle();
+
+    const available = !data;
+    console.log(`Username check: "${username}" → ${available ? "available" : "taken"}`);
+    return res.status(200).json(formatSuccess({ available }, "OK"));
+  } catch (error) {
+    console.error("Error checking username availability:", error);
+    next(error);
+  }
+};
+
+export const updateUserProfile = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    if (req.userId !== id) {
+      return res.status(403).json(formatError("Forbidden", 403));
+    }
+
+    const { name, username, location, bio } = req.body;
+    const updatedData = {};
+
+    if (name !== undefined) {
+      const trimmed = name.trim();
+      if (trimmed.length < 1 || trimmed.length > 40) {
+        return res.status(400).json(formatError("Name must be between 1 and 40 characters", 400));
+      }
+      updatedData.name = trimmed;
+    }
+
+    if (username !== undefined) {
+      const trimmed = username.trim();
+      if (!USERNAME_REGEX.test(trimmed)) {
+        return res.status(400).json(
+          formatError("Username must be 3–30 characters and contain only letters, numbers, or underscores", 400)
+        );
+      }
+      const lower = trimmed.toLowerCase();
+
+      const { data: existing } = await supabase
+        .from("users")
+        .select("id")
+        .eq("username", lower)
+        .neq("id", id)
+        .maybeSingle();
+
+      if (existing) {
+        return res.status(409).json(formatError("Username is already taken", 409));
+      }
+
+      updatedData.username = lower;
+    }
+
+    if (location !== undefined) {
+      if (location.length > 40) {
+        return res.status(400).json(formatError("Location must be at most 40 characters", 400));
+      }
+      updatedData.location = location;
+    }
+
+    if (bio !== undefined) {
+      if (bio.length > 500) {
+        return res.status(400).json(formatError("Bio must be at most 500 characters", 400));
+      }
+      updatedData.bio = bio;
+    }
+
+    if (Object.keys(updatedData).length === 0) {
+      return res.status(400).json(formatError("No valid fields to update", 400));
+    }
+
+    const client = getAuthenticatedClient(req.token);
+    const { data, error } = await client
+      .from("users")
+      .update(updatedData)
+      .eq("id", id)
+      .select("id, name, username, avatar_url, location, bio, created_at")
+      .single();
+
+    if (error) throw error;
+
+    return res.status(200).json(formatSuccess(data, "Profile updated successfully"));
+  } catch (error) {
+    console.error("Error updating user profile:", error);
+    next(error);
+  }
+};
+
+export const changePassword = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    if (req.userId !== id) {
+      return res.status(403).json(formatError("Forbidden", 403));
+    }
+
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json(formatError("currentPassword and newPassword are required", 400));
+    }
+
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json(
+        formatError(
+          "New password must be at least 8 characters and contain at least one uppercase letter, one lowercase letter, and one number",
+          400
+        )
+      );
+    }
+
+    const { data: userData, error: userError } = await supabaseAdmin.auth.admin.getUserById(id);
+    if (userError || !userData?.user?.email) {
+      return res.status(404).json(formatError("User not found", 404));
+    }
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: userData.user.email,
+      password: currentPassword,
+    });
+
+    if (signInError) {
+      return res.status(401).json(formatError("Current password is incorrect", 401));
+    }
+
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(id, {
+      password: newPassword,
+    });
+
+    if (updateError) throw updateError;
+
+    return res.status(200).json(formatSuccess(null, "Password updated successfully"));
+  } catch (error) {
+    console.error("Error changing password:", error);
+    next(error);
+  }
+};
+
+export const changeEmail = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    if (req.userId !== id) {
+      return res.status(403).json(formatError("Forbidden", 403));
+    }
+
+    const { currentPassword, newEmail } = req.body;
+
+    if (!currentPassword || !newEmail) {
+      return res.status(400).json(formatError("currentPassword and newEmail are required", 400));
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newEmail)) {
+      return res.status(400).json(formatError("Invalid email format", 400));
+    }
+
+    const { data: userData, error: userError } = await supabaseAdmin.auth.admin.getUserById(id);
+    if (userError || !userData?.user?.email) {
+      return res.status(404).json(formatError("User not found", 404));
+    }
+
+    if (userData.user.email === newEmail.toLowerCase()) {
+      return res.status(400).json(formatError("New email must be different from the current one", 400));
+    }
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: userData.user.email,
+      password: currentPassword,
+    });
+
+    if (signInError) {
+      return res.status(401).json(formatError("Current password is incorrect", 401));
+    }
+
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(id, {
+      email: newEmail,
+    });
+
+    if (updateError) throw updateError;
+
+    return res.status(200).json(formatSuccess(null, "Confirmation email sent to the new address"));
+  } catch (error) {
+    console.error("Error changing email:", error);
+    next(error);
+  }
+};
+
+export const deleteAccount = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    if (req.userId !== id) {
+      return res.status(403).json(formatError("Forbidden", 403));
+    }
+
+    const client = getAuthenticatedClient(req.token);
+
+    const { error: dbError } = await client.from("users").delete().eq("id", id);
+    if (dbError) throw dbError;
+
+    const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(id);
+    if (authError) throw authError;
+
+    return res.status(204).send();
+  } catch (error) {
+    console.error("Error deleting account:", error);
     next(error);
   }
 };

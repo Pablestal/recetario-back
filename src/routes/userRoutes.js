@@ -12,6 +12,12 @@ import {
   getFollowers,
   getFollowing,
   isFollowing,
+  updateUserProfile,
+  checkEmailAvailability,
+  checkUsernameAvailability,
+  changePassword,
+  changeEmail,
+  deleteAccount,
 } from "../controllers/userController.js";
 import { getMyFavorites } from "../controllers/favoriteController.js";
 
@@ -24,9 +30,17 @@ router.put("/me", verifyAuth, updateMyProfile);
 
 // ── Public profile ──
 router.get("/username/:username", optionalAuth, getUserProfileByUsername);
+router.get("/check-username/:username", checkUsernameAvailability);
+router.get("/check-email/:email", checkEmailAvailability);
 router.get("/:id", optionalAuth, getUserProfile);
 router.get("/:id/recipes", optionalAuth, getUserRecipes);
 router.get("/:id/collections", optionalAuth, getUserCollections);
+
+// ── Account management ──
+router.patch("/:id", verifyAuth, updateUserProfile);
+router.post("/:id/change-password", verifyAuth, changePassword);
+router.post("/:id/change-email", verifyAuth, changeEmail);
+router.delete("/:id", verifyAuth, deleteAccount);
 
 // ── Followers ──
 router.post("/:id/follow", verifyAuth, followUser);

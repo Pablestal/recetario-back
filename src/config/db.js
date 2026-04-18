@@ -14,7 +14,13 @@ if (
 // Base client for operations that don't require user authentication
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+);
+
+// Admin client using service role key — bypasses RLS, use only for admin operations
+export const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY,
 );
 
 /**
@@ -26,7 +32,7 @@ const supabase = createClient(
 export const getAuthenticatedClient = (accessToken) => {
   const supabaseClient = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   );
 
   // Override the default headers to include the user's access token
