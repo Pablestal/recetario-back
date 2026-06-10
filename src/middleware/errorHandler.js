@@ -3,6 +3,15 @@ export const errorHandler = (err, req, res, next) => {
   console.error("Error:", err.stack);
 
   const statusCode = err.statusCode || 500;
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    "http://localhost:5173",
+    "https://recetario-eight.vercel.app",
+  ];
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
 
   res.status(statusCode).json({
     status: "error",
